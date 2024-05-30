@@ -13,7 +13,6 @@ h2 {
 p {
   color:#00ff00;
   font-family:courier;
-  font-size:20px;
 }
 ul {
   color:#00ff00;
@@ -36,13 +35,11 @@ a:link {
   color:#00ff00;
   font-family:courier;
   text-decoration:none;
-  font-size:18px;
 }
 a:visited {
   color:#00ff00;
   font-family:courier;
   text-decoration:none;
-  font-size:18px;
 }
 a:hover {
   color:#00ff00;
@@ -52,5 +49,5 @@ a:hover {
 div {
   color:#00ff00;
   font-family:courier;
-  font-size:18px;
+  font-size:20px;
 }
