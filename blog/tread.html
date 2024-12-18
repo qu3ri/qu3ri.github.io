@@ -1,0 +1,181 @@
+<!doctype html>
+
+<html>
+  <head>
+    <title>Smart Treadmill Security</title>
+    <link rel="stylesheet" href="../style.css">
+  </head>
+
+  <body>
+    <div class="nav">
+      <a href="../index.html">Home</a> |
+      <a href="../about.html">About</a> |
+      <a href="../projects.html">Projects</a> |
+      <a href="../blog.html">Blog</a>
+    </div>
+    <br>
+    <h1 style="text-align: center;">Investigating the Security of Internet-Connected Treadmills</h1>
+    <p style="text-align: center;">December 18, 2024</p>
+    <br>
+    <div style="width: 90vw; margin: auto; color:#00ff00; font-family:courier; font-size:20px;">
+	<br>
+	<br>
+	I go to the gym a lot, and I have always been wary of devices other than my phone and laptop that can connect to the internet. 
+	In most cases, it simply seems unnecessary, while in others, the privacy or security implications could be more serious. 
+	Treadmills fall into the second category because of their potential to cause physical harm to a user if they malfunction in 
+	some way. After consistently finding treadmills with internet connection capabilities in hotel gyms, the gym at work, and the 
+	gym area of my favorite rock climbing place, I decided to research how secure these machines actually were and whether there was 
+	any risk to the physical safety of their users. This project was part of my internship with IBM's X-Force Red in 2023, and was 
+	a joint effort with Anthony Ioppolo and Josh Merrill. 
+	<br>
+	<br>
+	We began by learning as much as possible about how the consoles worked on various brands of treadmills. These consoles allow you 
+	to view your workout stats, choose a workout program, watch Netflix and Hulu, play Spotify, and even sometimes have a web browser. 
+	We also used open-source intelligence (OSINT) to discover information that manufacturers may have publicly available, whether they 
+	intend to or not. Based on this initial research, we decided to focus on two brands of treadmills, Precor and Matrix. 
+	<br>
+	<h2>
+	Matrix
+	</h2>
+        Matrix has a wide range of smart gym equipment and many different consoles. To begin our search for vulnerabilities, we had to acquire 
+	a copy of the software runnng on those consoles. Without having physical access to one of these treadmills, we looked to see if we 
+	could download it online. Customers may need to be able to do this if the software on their machine gets corrupted or if an update is released. 
+	Typically, smart treadmills are updated over the internet, but in some cases, users may want to have a treadmill with a screen without actually 
+	connecting it to the internet. For these customers, another method of updating has to be available. Users can download a zipped file containing 
+	the updated console software to a USB and plug it in to the treadmill. A key stored on the system will unlock the zip file and update the system.
+	<br>
+	<br>
+	We downloaded the update file for several versions of the Matrix consoles. These updates were in a password protected zip file. 
+	All attempts to unencrypt this zip file were unsuccessful, since we did not have access to the password that would be stored on the 
+	treadmills, and it was not vulnerable to a brute force attack. No useful information could be obtained from the zip file, so we thought 
+	we were out of luck. However, our OSINT had uncovered another path forward.
+	<br>
+	<br>
+	While looking for sources that may give an indication of the password to the zip file, we came across an open Amazon S3 bucket. 
+	An investigation of the contents of this bucket revealed that it was used to serve the zipped update files, but by going up a directory, 
+	the unzipped files for each of their consoles were also available! We downloaded these files for offline analysis. 
+	<br>
+	<br>
+	In the end, although we were able obtain the unencrypted files, we did not uncover any vulnerabilities in the console software. 
+	The public availability of these files were reported to the vendor, and CVE-2023-49219 and CVE-2023-49220 were assigned for this 
+	information disclosure.
+	<h2>
+	Precor
+	</h2>
+	We didn't have particularly interesting findings from Matrix, so we moved on to Precor treadmills. This seemed promising as we discovered 
+	a number of manuals through OSINT that revealed administrator codes and passwords we could use. Precor also allows their treadmills to 
+	be updated offline via USB. Customers can download the latest version of the console software from the Precor software updates site, which is 
+	protected by a username and password. However, a username and password are not particularly useful at preventing access to the page when 
+	the necessary credentials are published in a publicly available manual for how to perform these USB updates. 
+	<br>
+	<br>
+	Equipped with these credentials, we logged into the software page and downloaded a copy of the console software for each of the models, the 
+	P80, P62, and P82. As we started investigating the software, it was clear that each of the consoles used a Linux-based filesystem. We began 
+	looking through the most important Linux files to see if there was anything interesting, such as checking for users' home directories, 
+	looking at the /etc/passwd file, and seeing whether any firewall rules were in place. 
+	<br>
+	<br>
+	The P62 and P82 consoles were essentially identical, and the P80, which is an older model, had some differences. The /etc/passwd file in 
+	the P80 software led to our first real finding of the project. On modern Linux systems, users' password hashes are stored in the /etc/shadow 
+	file, which is only readable by the root user. However, on this machine, the root password hash was stored in the globally readable /etc/passwd 
+	file. We were able to crack this password hash and obtain the password for the root account in plaintext! This vulnerability was assigned to 
+	CVE-2023-49223.
+	<br>
+	<br>
+	Since we already had access to the entire filesystem through the downloaded software, this password did not really unlock any new doors for us. 
+	We decided to move on to exploring the firewall rules for the consoles. The firewall rules showed three open services: SSH, Android Debug Bridge 
+	(ADB), and Precor Remote Debug. As the Precor Remote Debug path seemed like it would be a proprietary form of connection, we chose to focus on 
+	SSH access instead, and this turned out to be our best decision of the project. 
+	<br>
+	<br>
+	We had the root password from the P80 console, so we wondered if we were able to use this to log in via SSH. Many systems are configured to 
+	disallow root login through SSH with a password and we were unsure whether these would be like that, so we also wanted to find out which 
+	other users may be available. The first thing to check was the contents of the SSH authorized_keys file. If the consoles shipped with a public 
+	key that allowed login to anyone with the associated private key, this would leave a path to connect to any of the thousands of Precor treadmills 
+	worldwide. First, we checked the authorized_keys file on the P82 software. It contained one public key! Next we looked at P62. This, too, 
+	had one public key in the authorized_keys file, and it was the same one as the P82. Finally, we checked whether this key was present on the P80, 
+	and it was! One private key, presumably held by someone at Precor, would allow SSH login into every Precor smart treadmill. We were unbelievably 
+	excited by this finding, since if that private key was ever leaked, it would compromise many machines. 
+	<br>
+	<br>
+	The P82 and P62 had no other files in the SSH directory, so we expected the hardcoded public key to be our biggest finding. There was the 
+	thought in the back of our minds though, "What if we could find that private key?" A further investigation of the P80 software revealed 
+	what appeared to be a set of keys in the SSH directory: an id_rsa.pub and id_rsa file. This seemed too good to be true, so we checked the 
+	contents of the id_rsa.pub and found that it was identical to the public key in the authorized_keys file on all three console versions! 
+	This looked like it was actually a set of valid keys for all Precor treadmills! Now, testing it was our top priority. As we did not have 
+	access to a treadmill with one of these consoles, we copied the key files from the console software to our own computer, 
+	uploaded the public key to a virtual machine and attempted to use the private key to SSH into it. Immediately, we were connected, and 
+	we knew we had to now find a way to test this in the real world. 
+	<br>
+	<h2>
+	Testing
+	</h2>
+	Finding a treadmill seems like an easy task, but getting permission to perform security tests on it is more difficult than finding the 
+	vulnerabilities in the first place. The gym on our office campus had Precor treadmills with P62 consoles, so we figured this would be the 
+	ideal solution. However, despite explaining our research and what we planned to do, sending many emails, and having a face-to-face meeting 
+	with the gym owners, we were not granted permission to test the SSH keys at this gym. This led to an investigation into every gym in Austin 
+	to see which ones had the right brand of treadmills with the smart consoles. Eventually, we found that one of the climbing gyms had what we 
+	were looking for. They had no problem with us performing tests as long as we promised that everything we were doing would not affect the 
+	safety of their treadmills, so we got right to work.
+	<br>
+	<br>
+	We needed to be on the same network as the treadmills in order to test SSH, so the first thing we had to do was find out what network 
+	they were using. The network setup on Precor treadmills is within the admin panel, which does require a password, but this password is 
+	also available online through their manuals and we were able to get into this menu. This gym did not have their machines connected to 
+	a network, so we connected the treadmill to a hotspot that was also used for our laptops. After the treadmill was connected and had an IP address, 
+	we attempted to SSH to the root user at that IP using the private key we found. Some adjustments to file permissions and permitted algorithms 
+	were needed on our end, but after it was properly configured, it connected and we had our first root shell on a real treadmill!
+	<br>
+	<br>
+	We poked around in the file system on the live machine, but it resembled the software update we had downloaded and did not provide any new 
+	insights. We were especially interested in having the ability to change the speed of the treadmill remotely, either directly or by uploading 
+	a workout program that users could select, but since speed and incline adjustments were made through phyiscal buttons on the console, this 
+	was not something we were able to accomplish during the course of the project. Another outcome that could pose a risk to users is being able 
+	to stop the treadmill belt unexpectedly over SSH. We didn't find a function to do this on its own, however, by issuing a reboot command to 
+	the console, the entire treadmill reboots. The console turns off, disconnecting our SSH session, but not before the belt is brought to an 
+	uneven stop. At a slow pace, this is not particularly dangerous, but at higher speeds, the belt jerks and slows unpredictably, which could 
+	cause a user to fall.
+	<br>
+	<br>
+	This easy attack demonstrated that we could obtain root user privileges and potentially cause harm to users just by bringing a device with the 
+	identified SSH private key with us to a gym. These vulnerabilities were reported to Precor and issued CVEs CVE-2023-49221, CVE-2023-49222, and 
+	CVE-2023-49224.
+	<br>
+	<h2>
+	Conclusion
+	</h2>
+	Although this was the extent of our testing due to time limitations of this research, it would be possible for an attacker to expand the impact 
+	under certain conditions. Consider a corporate gym that has internet-connected treadmills attached to their network. Someone could walk into this 
+	gym, connect their device to the same network as a low priveleged user, and begin a port scan of the network. This port scan would reveal the 
+	treadmills as Linux devices that have port 22 open, and potentially the ADB and Precor Remote Debug ports open. Without ever having to touch 
+	the console of the treadmill, the attacker now knows the IP address of the treadmill and can use the SSH key to connect and have root-level access 
+	to a device on the network, giving them significantly more capabilities. 
+	<br>
+	<br>
+	In another scenario, an attacker can get on the treadmill with their phone, looking like a normal user. After starting a walk, they can access the 
+	service menu, find the IP address of the treadmill, and SSH to that address using their phone. They can then get off the treadmill, wait for another 
+	user to start running, and stop the machine. 
+	<br>
+	<br>
+	Although we were very excited to find these vulnerabilities, what is fun for us as security researchers is not fun for the vendors or owners of 
+	these machines. As a result, we ensured that we went through a proper vulnerability disclosure process to notify the vendor and allow them to 
+	issue patches for the software before publicly disclosing our findings. The goal of this project was to bring awareness to the security of smart 
+	gym equipment and make these devices safer for users.
+	<br>	
+	<h2>
+	Additional Reading
+	</h2>
+	<a href="https://securityintelligence.com/x-force/internet-connected-treadmill-vulnerabilities-discovered/"><u>SecurityIntelligence Blog</u></a><br>
+	<a href="https://youtu.be/xlvlxptoSsU"><u>RITSEC Presentation</u></a><br>
+	<a href="https://www.hackster.io/news/precor-s-smart-treadmills-vulnerable-to-attack-ibm-x-force-researchers-warn-26c1c4d7a2d5">
+		<u>Precor's "Smart" Treadmills Vulnerable to Attack, IBM X-Force Researchers Warn</u></a><br>
+	<br>
+	<br>
+	This project was a joint effort by Kyri Lea, Anthony Ioppolo, and Josh Merrill
+	<br>
+	<br>
+	<br>
+	<br>
+    </div>
+  </body>
+</html>
